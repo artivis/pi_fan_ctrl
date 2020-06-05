@@ -1,0 +1,29 @@
+name: pi-fan-ctrl
+version: git
+summary: Fan control for the Raspberry Pi
+description: |
+  Fan control for the Raspberry Pi.
+base: core18
+
+grade: devel
+confinement: strict
+
+architectures:
+  - build-on: armhf
+    run-on: armhf
+  - build-on: arm64
+    run-on: arm64
+
+parts:
+  pi-fan-ctrl:
+    plugin: python
+    python-version: python3
+    source: .
+
+apps:
+  pi-fan-ctrl:
+    command: pi_fan_ctrl
+    daemon: simple
+    plugs:
+      - gpio
+      - hardware-observe

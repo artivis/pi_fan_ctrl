@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Obtain value
+gpio="$(snapctl get gpio)"
+
+# Validate it in [2-26]
+if [[ ! "$gpio" =~ ^(-1|[2-9]|1[0-9]|2[0-6])$ ]]; then
+    echo "\"$gpio\" is not a valid gpio" >&2
+    exit 1
+fi
+
+fan_min="$(snapctl get fan-min)"
+
+# Validate it in [0-100]
+if [[ ! "$fan_min" =~ ^[0-9][0-9]?$|^100$ ]]; then
+    echo "\"$fan_min\" is not a valid fan minimum speed" >&2
+    exit 1
+fi
+
+fan_speed_out="$(snapctl get fan-speed-out)"
+
+# Validate it True or False
+if [[ ! "$fan_speed_out" =~ ^(True|False)$ ]]; then
+    echo "\"$fan_speed_out\" is not valid (True or False)" >&2
+    exit 1
+fi

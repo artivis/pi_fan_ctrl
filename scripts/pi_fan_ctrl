@@ -1,0 +1,172 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+import RPi.GPIO as GPIO
+import time
+import os
+import yaml
+import subprocess
+import sys
+
+class PiFanCtrl:
+
+
+    verbose = False
+    temp_file = '/sys/class/thermal/thermal_zone0/temp'
+
+
+    def __init__(self):
+        self.gpio     = 21  # BCM used to drive transistor's base
+        self.fan_min  = 20  # [%] Fan minimum speed.
+        self.sleep    =  1  # [s] Time to wait between each refresh
+        self.pwm_freq = 25  # [Hz] Change this value if fan has strange behavior
+
+        # Configurable temperature and fan speed steps
+        self.temp_steps  = [50, 55,   60, 65,   70]  # [C]
+        self.speed_steps = [30, 47.5, 65, 82.5, 100] # [%]
+
+        # Fan speed will change only if the difference
+        # of temperature is higher than hysteresis
+        self.hyst = 1
+
+        self.fan_speed_out = True
+
+        self.init_gpio()
+        self.create_output_file()
+
+        print('Ready to go!')
+
+    def get_param(self, key):
+        return subprocess.check_output(['snapctl', 'get', key])
+
+
+    def get_params(self):
+        gpio_tmp = int(self.get_param('gpio'))
+
+        if gpio_tmp != self.gpio:
+            self.gpio = gpio_tmp
+            GPIO.cleanup()
+            self.init_gpio()
+
+        self.pwm_freq = int(self.get_param('pwm-freq'))
+
+        self.fan_min = int(self.get_param('fan-min'))
+        self.sleep = int(self.get_param('sleep'))
+
+        # temp_steps_tmp = list(subprocess.check_output(['snapctl', 'get', 'temp-steps']))
+        # speed_steps_tmp = list(subprocess.check_output(['snapctl', 'get', 'speed_steps']))
+
+        # Configurable temperature and fan speed steps
+        temp_steps_tmp  = [50, 55,   60, 65,   70]  # [C]
+        speed_steps_tmp = [30, 47.5, 65, 82.5, 100] # [%]
+
+        # We must set a speed value for each temperature step
+        if len(speed_steps_tmp) == len(temp_steps_tmp):
+            self.speed_steps = speed_steps_tmp
+            self.temp_steps  = temp_steps_tmp
+        else:
+            print('Numbers of temp steps and speed steps are different!')
+
+        self.hyst = int(self.get_param('hyst'))
+
+        self.fan_speed_out = bool(self.get_param('fan-speed-out'))
+
+
+    def init_gpio(self):
+        Setup GPIO pin
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(gpio, GPIO.OUT, initial=GPIO.LOW)
+        fan = GPIO.PWM(gpio, pwm_freq)
+        fan.start(0)
+        print('GPIO : ' + str(self.gpio) + ' initialized')
+
+
+    def create_output_file(self):
+        # Create the fan_ctrl folder
+        output_path = os.getenv('SNAP_COMMON') #daemon
+        # output_path = os.getenv('SNAP_USER_COMMON')
+        if not output_path:
+            output_path = os.path.join(os.path.expanduser('~'), '.pi_fan_ctrl')
+
+        if os.path.exists(output_path):
+            if not os.path.isdir(output_path):
+                raise Exception('File' + output_path + 'exists but is not a directory.')
+        else:
+            os.makedirs(output_path)
+
+        # Create the fan_ctrl file
+        # @todo /sys/class/thermal ?
+        output_file = os.path.join(output_path, 'fan_speed')
+        if os.path.exists(output_file):
+            if not os.path.isfile(output_file):
+                raise Exception('File' + output_file + 'exists but is not a file.')
+        else:
+            open(output_file, 'a').close()
+
+        self.output_file = output_file
+
+        print('Writing fan_speed to : ' + self.output_file)
+
+
+    def write_fan_speed(self, fan_speed):
+        print('Writing: ' + str(fan_speed))
+        if self.fan_speed_out:
+            with open(self.output_file, 'w') as file:
+                file.write(str(round(fan_speed))+'\n')
+
+
+    def run(self):
+        cpu_temp      = 0
+        fan_speed     = 0
+        cpu_temp_old  = 0
+        fan_speed_old = 0
+
+        try:
+            while 1:
+
+                self.get_params()
+
+                # Read CPU temperature
+                with open(self.temp_file, 'r') as file:
+                    cpu_temp = float(file.read()) / 1000
+
+                # Calculate desired fan speed
+                if abs(cpu_temp - cpu_temp_old) > self.hyst:
+                    # Below first value, fan will run at min speed.
+                    if cpu_temp < self.temp_steps[0]:
+                        fan_speed = self.speed_steps[0]
+                    # Above last value, fan will run at max speed
+                    elif cpu_temp >= self.temp_steps[len(self.temp_steps) - 1]:
+                        fan_speed = self.speed_steps[len(self.temp_steps) - 1]
+                    # If temperature is between 2 steps,
+                    # fan speed is calculated by linear interpolation
+                    else:
+                        for i in range(0, len(self.temp_steps) - 1):
+                            if (cpu_temp >= self.temp_steps[i]) and (cpu_temp < self.temp_steps[i + 1]):
+                                fan_speed = round((self.speed_steps[i + 1] - self.speed_steps[i])
+                                                 / (self.temp_steps[i + 1] - self.temp_steps[i])
+                                                 * (cpu_temp - self.temp_steps[i])
+                                                 + self.speed_steps[i], 1)
+
+                    if fan_speed != fan_speed_old:
+                        if (fan_speed != fan_speed_old
+                                and (fan_speed >= self.fan_min or fan_speed == 0)):
+                            fan.ChangeDutyCycle(fan_speed)
+                            fan_speed_old = fan_speed
+                    cpu_temp_old = cpu_temp
+
+                self.write_fan_speed(fan_speed)
+
+                # Wait until next refresh
+                time.sleep(self.sleep)
+
+        # If a keyboard interrupt occurs (ctrl + c),
+        # the GPIO is set to 0 and the program exits.
+        except KeyboardInterrupt:
+            print('Fan ctrl interrupted by keyboard')
+            GPIO.cleanup()
+            sys.exit()
+
+
+controller = PiFanCtrl()
+controller.run()

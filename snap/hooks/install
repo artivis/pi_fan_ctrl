@@ -1,0 +1,14 @@
+#!/bin/sh -e
+
+# Initialize the sleep time to a default
+snapctl set gpio=21
+snapctl set fan-min=20
+snapctl set sleep=1
+snapctl set pwm-freq=25
+
+# snapctl set temp_steps=20
+# snapctl set speed_steps=20
+
+snapctl set hyst=1
+
+snapctl set fan-speed-out=True
